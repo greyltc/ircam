@@ -21,10 +21,10 @@ class IR:
     pixel_data_type = "<H"
 
 
-    plot_xmin = -1
-    plot_xmax = 1
-    plot_ymin = -1
-    plot_ymax = 1
+    plot_xmin = -256/2
+    plot_xmax = 256/2
+    plot_ymin = -192/2
+    plot_ymax = 192/2
     #plot_colormap = "viridis"
     plot_colormap = "Grays"
 
@@ -177,6 +177,7 @@ class IR:
         y = np.linspace(self.plot_ymin, self.plot_ymax, imgdata.shape[0])
         X, Y = np.meshgrid(x, y)
         pcm = ax.pcolormesh(X,Y,imgdata, cmap=self.plot_colormap, aa=True)
+        ax.set_aspect("equal")
         #im = ax.imshow(imgdata)
         if self.enable_colorbar:
             # recomputing the colorbar seems to slow down the rendering a lot
