@@ -7,24 +7,98 @@ from matplotlib import animation
 from itertools import batched
 #import time
 from functools import partial
-from linuxpy.video.device import Device, VideoCapture
+from linuxpy.video.device import Device, VideoCapture, Capability
 #import skimage
 #import cv2
 
 
 class IR:
     dev = "/dev/video0"
-    stream_mode_index = 0
 
-    img_y_start = 0
-    img_y_end = 192
+    # # "see all"
+    # stream_mode_index = 5
+    # img_y_start = -1  # set to -1 and all the frame data will be video
+    # forced_metadata_indicies = []
+    # force_frame_height = None
+    # #force_frame_height = 192
+    # pixel_data_type = "B"
+    # use_pixel_plot_limits = True
+    # plot_aspect = "auto"
+    # plot_xmin = -256/2
+    # plot_xmax = 256/2
+    # plot_ymin = -192/2
+    # plot_ymax = 192/2
+
+    # # works okay with imgdata_flipped/2**3, one bbp
+    # stream_mode_index = 5
+    # img_y_start = -1  # set to -1 and all the frame data will be video
+    # forced_metadata_indicies = [(int("0000c000", 16), None)]
+    # force_frame_height = None
+    # #force_frame_height = 192
+    # pixel_data_type = "B"
+    # use_pixel_plot_limits = True
+    # plot_aspect = "auto"
+    # plot_xmin = -256/2
+    # plot_xmax = 256/2
+    # plot_ymin = -192/2
+    # plot_ymax = 192/2
+
+    # "works" in low range mode with (imgdata_flipped/2**2)/10 - 100
+    stream_mode_index = 4
+    img_y_start = -1  # set to -1 and all the frame data will be video
+    forced_metadata_indicies = [(0, int("00006bc8", 16)), (int("0001ebc8", 16), None)]
+    #force_frame_height = None 
+    force_frame_height = 192
     pixel_data_type = "<H"
-
-
+    use_pixel_plot_limits = False
+    plot_aspect = "equal"
     plot_xmin = -256/2
     plot_xmax = 256/2
     plot_ymin = -192/2
     plot_ymax = 192/2
+
+    # # "works" with "(imgdata_flipped/2**2)/10 - 100"
+    # stream_mode_index = 2
+    # img_y_start = -1  # set to -1 and all the frame data will be video
+    # img_y_end = 192
+    # forced_metadata_indicies = [(0, int("1220", 16)), (int("00019220", 16), None)]
+    # force_frame_height = 192
+    # pixel_data_type = "<H"
+    # use_pixel_plot_limits = False
+    # plot_aspect = "equal"
+    # plot_xmin = -256/2
+    # plot_xmax = 256/2
+    # plot_ymin = -192/2
+    # plot_ymax = 192/2
+
+    # does not work
+    # stream_mode_index = 0
+    # img_y_start = 0
+    # img_y_end = 192
+    # forced_metadata_indicies = []
+    # force_frame_height = None
+    # pixel_data_type = "<e"
+    # use_pixel_plot_limits = True
+    # plot_aspect = "equal"
+    # plot_xmin = -256/2
+    # plot_xmax = 256/2
+    # plot_ymin = -192/2
+    # plot_ymax = 192/2
+
+    # does not work
+    #stream_mode_index = 1
+    #img_y_start = 0
+    #img_y_end = 192
+    #forced_metadata_indicies = []
+    #force_frame_height = None
+    #pixel_data_type = "<H"
+    #use_pixel_plot_limits = True
+    #plot_aspect = "equal"
+    #plot_xmin = -256/2
+    #plot_xmax = 256/2
+    #plot_ymin = -192/2
+    #plot_ymax = 192/2
+
     #plot_colormap = "viridis"
     plot_colormap = "Grays"
 
@@ -36,7 +110,10 @@ class IR:
 
     def __init__(self):
         self.cam = Device(self.dev)
-        self.img_y = self.img_y_end - self.img_y_start
+        if self.img_y_start == -1 or self.img_y_end == -1:
+            self.img_y = -1
+        else:
+            self.img_y = self.img_y_end - self.img_y_start
 
     def __enter__(self):
         self.cam = self.cam.__enter__()
@@ -45,6 +122,13 @@ class IR:
     
     def __exit__(self, type, value, traceback):
         return self.cam.__exit__(type, value, traceback)
+    
+    def f(self, value):
+        factors = []
+        for i in range(1, int(value**0.5)+1):
+            if value % i == 0:
+                factors.append((i, int(value / i)))
+        return factors
 
     def setup_capture(self) -> VideoCapture:
         capture = VideoCapture(self.cam)
@@ -70,16 +154,22 @@ class IR:
     def structtype2numpytype(self, strformat):
         if "b" in strformat:
             npdtype = np.byte
+            npdtype = np.single
         elif "B" in strformat:
             npdtype = np.ubyte
+            npdtype = np.single
         elif "h" in strformat:
             npdtype = np.short
+            npdtype = np.single
         elif "H" in strformat:
             npdtype = np.ushort
+            npdtype = np.single
         elif "i" in strformat:
             npdtype = np.intc
+            npdtype = np.single
         elif "I" in strformat:
             npdtype = np.uintc
+            npdtype = np.single
         elif "l" in strformat:
             npdtype = np.long
         elif "L" in strformat:
@@ -90,6 +180,7 @@ class IR:
             npdtype = np.ulonglong
         elif "e" in strformat:
             npdtype = np.half
+            npdtype = np.single
         elif "f" in strformat:
             npdtype = np.single
         elif "d" in strformat:
@@ -109,34 +200,66 @@ class IR:
         with open(f"/tmp/IR_raw_{frame.frame_nb}.bin", "wb") as dump:
             dump.write(frame.data)
 
-        row_len = len(frame.data) / frame.height
+        metadata = b''
+        frame_dat = bytearray(frame.data)
+
+        for p in self.forced_metadata_indicies:
+            metadata += frame.data[p[0]:p[1]]
+
+        for p in self.forced_metadata_indicies[::-1]:
+            del frame_dat[p[0]:p[1]]
+
+        frame_dat = bytes(frame_dat)
+        frame_dat_len = len(frame_dat)
+
+        if self.force_frame_height:
+            row_len = frame_dat_len / self.force_frame_height
+        else:
+            row_len = frame_dat_len / frame.height
         if row_len.is_integer():
             row_len = int(row_len)
         else:
-            raise ValueError("Frame data does not divide evently into image widths")
-        img_start = int(self.img_y_start*row_len)
-        img_end = int(self.img_y_end*row_len)
-        imgraw = frame.data[img_start:img_end]
-        metadata = frame.data[0:img_start] + frame.data[img_end:-1]
+            new_frame_shape = self.f(frame_dat_len)[-1]
+            if self.debug:
+                print(f"WARNING: Reported frame width does not divide evenly into frame data length. Reshaping the video to be: {new_frame_shape[::-1]}")
+            row_len = new_frame_shape[0]
+        if self.img_y_start == -1 or self.img_y_end == -1:
+            img_start = 0
+            img_end = frame_dat_len
+            self.img_y = int(img_end/row_len)
+        else:
+            img_start = int(self.img_y_start*row_len)
+            img_end = int(self.img_y_end*row_len)
+        imgraw = frame_dat[img_start:img_end]
+        metadata_regions = []
+        metadata_regions.append((0,img_start))
+        metadata_regions.append((img_end,-1))
+        for mdr in metadata_regions:
+            metadata += frame_dat[mdr[0]:mdr[1]]
         metadata_rows = [bytes(x) for x in batched(metadata, row_len)]
 
         img_unpacked = [x[0] for x in struct.iter_unpack(self.pixel_data_type, imgraw)]
-        imgdata = np.array(img_unpacked, self.npxformat).reshape(self.img_y, -1)
+        try:
+            imgdata = np.array(img_unpacked, self.npxformat).reshape(self.img_y, -1)
+        except Exception as e:
+            raise RuntimeError(f"Failed reshaping the unpacked image data: {e}\nTry another pixel format specifier")
         imgdata_flipped = np.flipud(imgdata)
 
-        with open(f"/tmp/IR_img_{frame.frame_nb}.bin", "wb") as dump:
-            dump.write(imgraw)
+        if imgraw:
+            with open(f"/tmp/IR_img_{frame.frame_nb}.bin", "wb") as dump:
+                dump.write(imgraw)
 
-        with open(f"/tmp/IR_meta_{frame.frame_nb}.bin", "wb") as dump:
-            dump.write(metadata)
+        if metadata:
+            with open(f"/tmp/IR_meta_{frame.frame_nb}.bin", "wb") as dump:
+                dump.write(metadata)
 
 
-        meta000 = metadata_rows[0][0:]+b''
-        meta148 = metadata_rows[148]
-        unpack000 = [x[0] for x in struct.iter_unpack('<f', meta000)]
-        unpack148 = [x[0] for x in struct.iter_unpack('<H', meta148)]
-        strd000 = [f"{x:+08.2e}" for x in unpack000]
-        strd148 = [f"{x:05.0f}" for x in unpack148]
+        #meta000 = metadata_rows[0][0:]+b''
+        #meta148 = metadata_rows[148]
+        #unpack000 = [x[0] for x in struct.iter_unpack('B', meta000)]
+        #unpack148 = [x[0] for x in struct.iter_unpack('B', meta148)]
+        #strd000 = [f"{x:x}" for x in unpack000]
+        #strd148 = [f"{x:05.0f}" for x in unpack148]
         #print(strd000)
         #print(strd148[0:17])
         #0 =FFFF
@@ -157,7 +280,9 @@ class IR:
         #15 max
         #16 min
         
-        
+
+        imgdata_flipped = (imgdata_flipped/2**2)/10 - 100
+        #print(f"{imgdata_flipped.max()=}")
 
         return metadata_rows, imgdata_flipped
 
@@ -173,11 +298,15 @@ class IR:
         fig = plt.figure()
         ax = plt.gca()
         imgdata = self.process_camdat(self.frame_please(capture))[1]
-        x = np.linspace(self.plot_xmin, self.plot_xmax, imgdata.shape[1])
-        y = np.linspace(self.plot_ymin, self.plot_ymax, imgdata.shape[0])
+        if self.use_pixel_plot_limits:
+            x = range(imgdata.shape[1])
+            y = range(imgdata.shape[0])
+        else:
+            x = np.linspace(self.plot_xmin, self.plot_xmax, imgdata.shape[1])
+            y = np.linspace(self.plot_ymin, self.plot_ymax, imgdata.shape[0])
         X, Y = np.meshgrid(x, y)
         pcm = ax.pcolormesh(X,Y,imgdata, cmap=self.plot_colormap, aa=True)
-        ax.set_aspect("equal")
+        ax.set_aspect(self.plot_aspect)
         #im = ax.imshow(imgdata)
         if self.enable_colorbar:
             # recomputing the colorbar seems to slow down the rendering a lot
